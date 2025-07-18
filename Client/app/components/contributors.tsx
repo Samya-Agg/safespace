@@ -77,7 +77,7 @@ const contributors = [
     gradient: "from-cyan-600 to-blue-600",
     initials: "SA",
     img: "samya.png",
-    expertise: ["Clinical Psychology", "Mental Health", "Research"]
+    expertise: ["Django", "FastAPI", "Research"]
   },
 ];
 

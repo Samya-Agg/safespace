@@ -138,8 +138,11 @@ cython_debug/
 # VS Code
 .vscode/
 
+<<<<<<< HEAD:Safespace_fastapi/.gitignore
 
 
+=======
+>>>>>>> f2b3ea82b7ccbb143abc1472ea40a110ad5e58bb:Server/.gitignore
 # Data files
 *.csv
 *.json
@@ -205,11 +208,3 @@ newenv/
 venv/
 env/
 .venv/
-
-# Large model files (uncomment if you want to ignore all model files)
-# models/*.pkl
-# models/*.h5
-# models/*.hdf5
-
-# Keep specific model files if needed (add exceptions here)
-# !models/important_model.pkl 
