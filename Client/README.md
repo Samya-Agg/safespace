@@ -1,4 +1,3 @@
-
 # SafeSpaceAI
 
 [Live Site](https://safespaceai.vercel.app)
@@ -23,28 +22,25 @@
 ### Installation
 
 1. **Clone the repository:**
-    ```
-    git clone https://github.com/your-username/safespaceai.git
+    ```bash
+    git clone https://github.com/safespaceai/safespaceai.git
     cd safespaceai
     ```
 
 2. **Install dependencies:**
-    ```
+    ```bash
     npm install
     # or
     yarn install
     ```
 
-3. **Set environment variables**
-   
-   Create a `.env.local` file in the root directory and add any required environment variables (see `.env.example` if available).
-
-4. **Run locally:**
-    ```
+3. **Run locally:**
+    ```bash
     npm run dev
     # or
     yarn dev
     ```
+
     Visit [http://localhost:3000](http://localhost:3000) to view the application.
 
 ## 🌐 Deployment
@@ -52,19 +48,20 @@
 SafeSpaceAI is optimized for deployment on [Vercel](https://vercel.com/):
 
 - Connect your repository to Vercel.
-- Set up environment variables in the Vercel dashboard if needed.
+- Set up any required environment variables in the Vercel dashboard.
 - Deploy instantly—your app will be live at your Vercel URL.
+
+## 🛠 Tech Stack
+
+- Next.js
+- Tailwind CSS
+- OpenAI API
+- Vercel (for deployment)
 
 ## 🤝 Contributing
 
-Contributions, issues, and feature requests are welcome!  
-Feel free to check [issues page](https://github.com/your-username/safespaceai/issues) if you want to contribute.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/YourFeature`)
-3. Commit your changes (`git commit -am 'Add some feature'`)
-4. Push to the branch (`git push origin feature/YourFeature`)
-5. Open a pull request
+This is a collaborative academic/group project and is open-source for learning and demonstration purposes only.  
+External contributions and issues are not being tracked at the moment.
 
 ## 📄 License
 
@@ -72,8 +69,5 @@ Distributed under the MIT License. See `LICENSE` for more information.
 
 ## 📬 Contact
 
-For questions and feedback, open an issue or email [your-email@example.com](mailto:your-email@example.com).
-
----
-
-*This README is a template. Update the repo URL, environment details, and contact info as per your project.*
+This project is not actively maintained for public inquiries.  
+For internal questions, please contact the project team directly.
