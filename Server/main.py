@@ -24,6 +24,18 @@ import base64
 import warnings
 warnings.filterwarnings('ignore')
 
+# Audio processing imports
+import librosa
+import soundfile as sf
+import tempfile
+import os
+
+# TensorFlow imports for voice model
+import tensorflow as tf
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from tensorflow.keras.layers import Layer
+
 # Import your existing fusion model
 from latefusion_final import PhysioDominantFusion
 
@@ -163,11 +175,37 @@ class XAIExplainer:
             "summary": ""
         }
         
-        if self.physio_explainer is None:
-            return explanations
-            
         try:
-            # Get SHAP values
+            # If SHAP explainer is not available, use a simpler approach
+            if self.physio_explainer is None:
+                # Fallback: use feature variance as importance
+                print("⚠ SHAP explainer not available, using variance-based importance")
+                feature_importance = []
+                
+                # Average across windows
+                X_avg = np.mean(X_sample, axis=0)
+                X_std = np.std(X_sample, axis=0)
+                
+                for i in range(min(len(ALL_FEATURE_NAMES), len(X_avg))):
+                    # Use standard deviation as importance indicator
+                    importance = float(X_std[i]) if i < len(X_std) else 0.0
+                    feature_importance.append({
+                        "feature": ALL_FEATURE_NAMES[i],
+                        "importance": importance,
+                        "abs_importance": abs(importance)
+                    })
+                
+                # Sort by importance
+                feature_importance.sort(key=lambda x: x["abs_importance"], reverse=True)
+                
+                explanations.update({
+                    "available": True,
+                    "feature_importance": feature_importance[:top_k],
+                    "summary": self._generate_physio_summary(feature_importance[:top_k])
+                })
+                return explanations
+            
+            # Use SHAP explainer if available
             shap_values = self.physio_explainer.shap_values(X_sample)
             
             # Handle multi-class output
@@ -202,7 +240,30 @@ class XAIExplainer:
             
         except Exception as e:
             print(f"⚠ Failed to generate physio explanations: {e}")
-            explanations["error"] = str(e)
+            # Fallback to variance-based importance
+            try:
+                X_avg = np.mean(X_sample, axis=0)
+                X_std = np.std(X_sample, axis=0)
+                
+                feature_importance = []
+                for i in range(min(len(ALL_FEATURE_NAMES), len(X_std))):
+                    importance = float(X_std[i]) if i < len(X_std) else 0.0
+                    feature_importance.append({
+                        "feature": ALL_FEATURE_NAMES[i],
+                        "importance": importance,
+                        "abs_importance": abs(importance)
+                    })
+                
+                feature_importance.sort(key=lambda x: x["abs_importance"], reverse=True)
+                
+                explanations.update({
+                    "available": True,
+                    "feature_importance": feature_importance[:top_k],
+                    "summary": self._generate_physio_summary(feature_importance[:top_k])
+                })
+            except Exception as fallback_error:
+                print(f"⚠ Fallback explanation also failed: {fallback_error}")
+                explanations["error"] = str(e)
             
         return explanations
     
@@ -251,6 +312,42 @@ class XAIExplainer:
             
         except Exception as e:
             print(f"⚠ Failed to generate DASS-21 explanations: {e}")
+            explanations["error"] = str(e)
+            
+        return explanations
+    
+    def explain_voice_prediction(self, voice_probs, top_k=3):
+        """Generate explanations for voice predictions"""
+        explanations = {
+            "available": True,
+            "method": "Probability Analysis",
+            "feature_importance": [],
+            "summary": ""
+        }
+        
+        try:
+            # Analyze voice probabilities
+            class_names = ["Low", "Medium", "High"]
+            feature_importance = []
+            
+            for i, (prob, class_name) in enumerate(zip(voice_probs, class_names)):
+                feature_importance.append({
+                    "feature": f"Voice_{class_name}_Stress_Probability",
+                    "importance": float(prob),
+                    "abs_importance": float(prob),
+                    "value": float(prob)
+                })
+            
+            # Sort by importance
+            feature_importance.sort(key=lambda x: x["abs_importance"], reverse=True)
+            
+            explanations.update({
+                "feature_importance": feature_importance[:top_k],
+                "summary": self._generate_voice_summary(voice_probs)
+            })
+            
+        except Exception as e:
+            print(f"⚠ Failed to generate voice explanations: {e}")
             explanations["error"] = str(e)
             
         return explanations
@@ -343,6 +440,28 @@ class XAIExplainer:
             summary_parts.append(f"{feature_name} (score: {value:.1f}) {impact} stress")
         
         return f"Main questionnaire factors: {'; '.join(summary_parts)}."
+    
+    def _generate_voice_summary(self, voice_probs):
+        """Generate human-readable summary for voice explanations"""
+        if len(voice_probs) != 3:
+            return "Voice analysis data incomplete."
+        
+        class_names = ["Low", "Medium", "High"]
+        predicted_class = np.argmax(voice_probs)
+        confidence = np.max(voice_probs)
+        
+        summary = f"Voice analysis suggests {class_names[predicted_class].lower()} stress level "
+        summary += f"with {confidence:.1%} confidence. "
+        
+        # Add additional insights
+        if voice_probs[1] > 0.4:  # Medium stress is significant
+            summary += "Voice patterns indicate moderate stress indicators."
+        elif voice_probs[2] > 0.5:  # High stress is dominant
+            summary += "Voice patterns strongly suggest elevated stress levels."
+        else:
+            summary += "Voice patterns suggest relatively calm speech characteristics."
+        
+        return summary
     
     def _generate_fusion_summary(self, contributions, fusion_probs):
         """Generate human-readable summary for fusion explanations"""
@@ -613,55 +732,128 @@ def validate_and_parse_dass21(dass21_responses: str):
         print(f"DASS-21 validation failed: {e}")
         raise
 
-def validate_and_parse_voice_probs(voice_probs_str: str):
-    """Validate and parse voice probabilities"""
-    print(f"Raw voice probabilities input: '{voice_probs_str}'")
-    print(f"Input type: {type(voice_probs_str)}")
+# === Custom Attention Layer ===
+class Attention(Layer):
+    def __init__(self, **kwargs):
+        super(Attention, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        self.W = self.add_weight(name="att_weight", shape=(input_shape[-1], 1), initializer="normal")
+        self.b = self.add_weight(name="att_bias", shape=(input_shape[1], 1), initializer="zeros")
+        super().build(input_shape)
+
+    def call(self, x):
+        e = tf.keras.backend.tanh(tf.keras.backend.dot(x, self.W) + self.b)
+        a = tf.keras.backend.softmax(e, axis=1)
+        output = x * a
+        return tf.keras.backend.sum(output, axis=1)
+
+# === Voice Feature Extraction Functions ===
+def extract_mfcc_features(audio_path, n_mfcc=40, max_length=228):
+    """
+    Extract MFCC features from audio file to match the voice model's expected input format
     
+    Args:
+        audio_path: Path to audio file
+        n_mfcc: Number of MFCC coefficients (default: 40)
+        max_length: Maximum sequence length (default: 228)
+    
+    Returns:
+        MFCC features array of shape (max_length, n_mfcc)
+    """
     try:
-        # Clean the input
-        voice_probs_str = voice_probs_str.strip()
+        print(f"🔍 Loading audio file: {audio_path}")
         
-        # Try to parse as JSON first
-        try:
-            voice_probs = json.loads(voice_probs_str)
-            print(f"Parsed as JSON: {voice_probs}")
-        except json.JSONDecodeError:
-            # Try to parse as comma-separated string
-            try:
-                # Remove brackets if present
-                clean_input = voice_probs_str.strip("[](){}")
-                voice_probs = [float(x.strip()) for x in clean_input.split(",")]
-                print(f"Parsed as comma-separated: {voice_probs}")
-            except (ValueError, AttributeError) as e:
-                print(f"Failed to parse voice probabilities: {e}")
-                raise ValueError(f"Invalid voice probabilities format. Expected 3 comma-separated numbers or JSON array, got: {voice_probs_str}")
+        # Load audio file with librosa
+        y, sr = librosa.load(audio_path, sr=None)
         
-        # Validate length
-        if len(voice_probs) != 3:
-            print(f"Invalid voice probabilities length: {len(voice_probs)} (expected 3)")
-            raise ValueError(f"Voice probabilities must contain exactly 3 values, got {len(voice_probs)}")
+        print(f"✅ Audio loaded: shape={y.shape}, sample_rate={sr}, duration={len(y)/sr:.2f}s")
         
-        # Validate values are probabilities (0-1)
-        for i, val in enumerate(voice_probs):
-            if not isinstance(val, (int, float)) or val < 0 or val > 1:
-                print(f"Invalid voice probability value at index {i}: {val}")
-                raise ValueError(f"Voice probabilities must be between 0 and 1, got {val} at index {i}")
+        # Check if audio is too short
+        if len(y) < sr * 0.5:  # Less than 0.5 seconds
+            print("⚠️  Audio is very short, padding with silence")
+            # Pad with silence to at least 1 second
+            min_samples = int(sr * 1.0)
+            if len(y) < min_samples:
+                y = np.pad(y, (0, min_samples - len(y)), mode='constant')
         
-        # Validate probabilities sum to approximately 1
-        prob_sum = sum(voice_probs)
-        if abs(prob_sum - 1.0) > 0.01:  # Allow small floating point errors
-            print(f"Voice probabilities don't sum to 1: {prob_sum}")
-            raise ValueError(f"Voice probabilities must sum to 1, got sum: {prob_sum}")
+        # Extract MFCC features
+        mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
         
-        # Convert to floats
-        voice_probs = [float(x) for x in voice_probs]
-        print(f"Validated voice probabilities: {voice_probs}")
-        return voice_probs
+        # Transpose to get (time, features) format
+        mfcc = mfcc.T
+        
+        print(f"✅ MFCC extracted: shape={mfcc.shape}")
+        
+        # Pad or truncate to max_length
+        if mfcc.shape[0] < max_length:
+            # Pad with zeros
+            padding = np.zeros((max_length - mfcc.shape[0], n_mfcc))
+            mfcc = np.vstack([mfcc, padding])
+            print(f"✅ Padded to max_length: {mfcc.shape}")
+        else:
+            # Truncate to max_length
+            mfcc = mfcc[:max_length, :]
+            print(f"✅ Truncated to max_length: {mfcc.shape}")
+        
+        return mfcc.astype(np.float32)
         
     except Exception as e:
-        print(f"Voice probabilities validation failed: {e}")
-        raise
+        print(f"❌ Error extracting MFCC features: {e}")
+        import traceback
+        traceback.print_exc()
+        # Return zero-padded features if extraction fails
+        return np.zeros((max_length, n_mfcc), dtype=np.float32)
+
+def process_audio_file(audio_file: UploadFile):
+    """
+    Process uploaded audio file and extract features for voice model
+    
+    Args:
+        audio_file: Uploaded audio file
+    
+    Returns:
+        MFCC features array ready for model prediction
+    """
+    try:
+        # Get file extension to determine the correct suffix
+        file_extension = os.path.splitext(audio_file.filename)[1].lower()
+        if not file_extension:
+            file_extension = '.webm'  # Default to webm if no extension
+        
+        # Create temporary file to save uploaded audio
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            # Read uploaded file content
+            audio_content = audio_file.file.read()
+            temp_file.write(audio_content)
+            temp_file_path = temp_file.name
+        
+        try:
+            print(f"✅ Temporary audio file created: {temp_file_path}")
+            print(f"✅ Audio file size: {len(audio_content)} bytes")
+            
+            # Extract MFCC features
+            mfcc_features = extract_mfcc_features(temp_file_path)
+            
+            # Reshape for model input: (1, time_steps, features, 1)
+            # This matches the expected input shape of your voice model
+            mfcc_features = np.expand_dims(mfcc_features, axis=0)  # Add batch dimension
+            mfcc_features = np.expand_dims(mfcc_features, axis=-1)  # Add channel dimension
+            
+            print(f"✅ MFCC features extracted, final shape: {mfcc_features.shape}")
+            return mfcc_features
+            
+        finally:
+            # Clean up temporary file
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+                print(f"✅ Temporary file cleaned up: {temp_file_path}")
+                
+    except Exception as e:
+        print(f"❌ Error processing audio file: {e}")
+        import traceback
+        traceback.print_exc()
+        raise ValueError(f"Failed to process audio file: {str(e)}")
 
 # === Load Models ===
 try:
@@ -669,6 +861,10 @@ try:
     physio_model = joblib.load("models/regularized_global_model.pkl")
     dass21_model = joblib.load("models/stacking_classifier_model.pkl")
     dass21_scaler = joblib.load("models/scaler.pkl")
+    
+    # Load voice model with custom attention layer
+    voice_model = load_model("models/model_finetuned.h5", compile=False, custom_objects={'Attention': Attention})
+    print("✅ Voice model loaded successfully")
     
     # Updated fusion model to handle voice modality
     fusion_model = PhysioDominantFusion(
@@ -695,15 +891,15 @@ except Exception as e:
 async def predict(
     physiological_file: UploadFile = File(..., description="CSV file with physiological data"),
     dass21_responses: str = Form(..., description="DASS-21 responses as comma-separated values or JSON array"),
-    voice_probabilities: Optional[str] = Form(None, description="Voice probabilities as comma-separated values or JSON array (optional)")
+    voice_audio: Optional[UploadFile] = File(None, description="Voice audio file (WAV, MP3, etc.) for stress analysis (optional)")
 ):
     """
-    Predict stress level using physiological data, DASS-21 responses, and optional voice probabilities
+    Predict stress level using physiological data, DASS-21 responses, and optional voice audio
     
     Args:
         physiological_file: CSV file with columns: ECG, EDA, EMG, Temp
         dass21_responses: 7 values between 0-3, format: "[1,2,0,3,1,2,0]" or "1,2,0,3,1,2,0"
-        voice_probabilities: 3 probabilities for [Low, Medium, High] classes, format: "[0.33,0.34,0.33]" or "0.33,0.34,0.33"
+        voice_audio: Audio file for voice stress analysis (WAV, MP3, etc.)
     
     Returns:
         JSON with individual model probabilities, fusion results, predictions, and explanations
@@ -760,17 +956,34 @@ async def predict(
 
         # === Process Voice Data (Optional) ===
         voice_probs = None
-        if voice_probabilities:
-            print("\n🎤 Processing voice probabilities...")
+        if voice_audio:
+            print("\n🎤 Processing voice audio...")
+            print(f"🎤 Voice audio file: {voice_audio.filename}")
+            print(f"🎤 Voice audio content type: {voice_audio.content_type}")
+            print(f"🎤 Voice audio size: {voice_audio.size if hasattr(voice_audio, 'size') else 'Unknown'}")
+            print(f"🎤 Voice audio filename lower: {voice_audio.filename.lower()}")
+            print(f"🎤 Supported extensions: {('.wav', '.mp3', '.m4a', '.flac', '.ogg', '.webm')}")
+            
             try:
-                voice_probs = validate_and_parse_voice_probs(voice_probabilities)
-                voice_probs = np.array(voice_probs)
+                # Validate audio file
+                if not voice_audio.filename.lower().endswith(('.wav', '.mp3', '.m4a', '.flac', '.ogg', '.webm')):
+                    raise ValueError(f"Voice audio file must be a supported audio format (WAV, MP3, M4A, FLAC, OGG, WebM). Got: {voice_audio.filename}")
+                
+                # Process audio file and extract features
+                mfcc_features = process_audio_file(voice_audio)
+                print(f"✅ Voice features extracted, shape: {mfcc_features.shape}")
+                
+                # Make prediction with voice model
+                voice_probs = voice_model.predict(mfcc_features, verbose=0)[0]
                 print(f"✅ Voice probabilities: {voice_probs}")
+                
             except Exception as e:
                 print(f"❌ Voice processing failed: {e}")
+                import traceback
+                traceback.print_exc()
                 raise ValueError(f"Voice processing failed: {str(e)}")
         else:
-            print("\n🎤 No voice probabilities provided, using default uniform distribution")
+            print("\n🎤 No voice audio provided, using default uniform distribution")
             voice_probs = np.array([0.33, 0.34, 0.33])  # Default uniform distribution
 
         # === Fusion ===
@@ -801,6 +1014,9 @@ async def predict(
             # Explain DASS-21 prediction
             dass21_explanation = xai_explainer.explain_dass21_prediction(np.array([dass21_list]))
             
+            # Explain voice prediction
+            voice_explanation = xai_explainer.explain_voice_prediction(voice_probs)
+            
             # Explain fusion decision
             fusion_explanation = xai_explainer.explain_fusion_decision(fusion_input, fusion_probs)
             
@@ -809,6 +1025,7 @@ async def predict(
             print(f"⚠ Explanation generation failed: {e}")
             physio_explanation = {"available": False, "error": str(e)}
             dass21_explanation = {"available": False, "error": str(e)}
+            voice_explanation = {"available": False, "error": str(e)}
             fusion_explanation = {"available": False, "error": str(e)}
 
         # === Prepare Result ===
@@ -817,7 +1034,7 @@ async def predict(
             "predictions": {
                 "physio_probs": physio_probs_avg.tolist(),
                 "dass21_probs": dass21_probs.tolist(),
-                "voice_probs": voice_probs.tolist() if voice_probabilities else None,
+                "voice_probs": voice_probs.tolist() if voice_audio else None,
                 "fusion_probs": fusion_probs.tolist(),
                 "fusion_pred": fusion_pred,
                 "prediction_label": ["Low", "Medium", "High"][fusion_pred],
@@ -826,14 +1043,16 @@ async def predict(
             "explanations": {
                 "physiological": physio_explanation,
                 "questionnaire": dass21_explanation,
+                "voice": voice_explanation,
                 "fusion": fusion_explanation
             },
             "metadata": {
                 "physio_windows": X_physio.shape[0],
                 "physio_features": X_physio.shape[1],
                 "dass21_values": dass21_list,
-                "voice_provided": voice_probabilities is not None,
-                "modalities_used": ["physiological", "questionnaire", "voice" if voice_probabilities else None]
+                "voice_provided": voice_audio is not None,
+                "voice_filename": voice_audio.filename if voice_audio else None,
+                "modalities_used": ["physiological", "questionnaire", "voice" if voice_audio else None]
             }
         }
 
@@ -867,4 +1086,5 @@ async def predict(
         import traceback
         traceback.print_exc()
         return JSONResponse(content=error_response, status_code=500)
+
 

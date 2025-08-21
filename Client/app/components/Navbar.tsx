@@ -53,6 +53,15 @@ export default function Navbar() {
             >
               Home
             </Link>
+            <Link
+              href="/stress-buster"
+              className={`transition-colors duration-300 hover:scale-105 ${
+                scrolled ? "text-gray-700 hover:text-blue-600" : "text-white/90 hover:text-white" 
+              } font-semibold`}
+              style={!scrolled ? { textShadow: "0 2px 8px rgba(0,0,0,0.25)" } : {}}
+            >
+              StressBuster
+            </Link>
             <a
               href="/#contributors"
               className={`transition-colors duration-300 hover:scale-105 ${
@@ -100,6 +109,14 @@ export default function Navbar() {
                 onClick={() => setIsOpen(false)}
               >
                 Home
+              </Link>
+              <Link
+                href="/stress-buster"
+                className="block px-3 py-2 text-white font-semibold hover:text-blue-200 hover:bg-blue-800/60 rounded-lg transition-all duration-200"
+                style={{ textShadow: "0 2px 8px rgba(0,0,0,0.25)" }}
+                onClick={() => setIsOpen(false)}
+              >
+                StressBuster
               </Link>
               <a
                 href="/#contributors"

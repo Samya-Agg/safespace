@@ -53,6 +53,17 @@ interface StressResult {
       }>
       summary: string
     }
+    voice: {
+      available: boolean
+      method: string
+      feature_importance: Array<{
+        feature: string
+        importance: number
+        abs_importance: number
+        value: number
+      }>
+      summary: string
+    }
     fusion: {
       available: boolean
       method: string
@@ -291,7 +302,7 @@ const Results: React.FC<ResultsProps> = ({ result, isLoading }) => {
                 </p>
                 
                 {/* Modality Contributions */}
-                <div className="space-y-2">
+                {/* <div className="space-y-2">
                   <h5 className="font-medium">Modality Contributions:</h5>
                   <div className="grid md:grid-cols-3 gap-3">
                     {result.explanations.fusion.modality_contributions.map((modality, index) => (
@@ -306,7 +317,7 @@ const Results: React.FC<ResultsProps> = ({ result, isLoading }) => {
                       </div>
                     ))}
                   </div>
-                </div>
+                </div> */}
               </div>
             )}
 
@@ -349,6 +360,30 @@ const Results: React.FC<ResultsProps> = ({ result, isLoading }) => {
                       </span>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-gray-500">Score: {feature.value}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Voice Explanations */}
+            {result.explanations.voice.available && result.explanations.voice.feature_importance.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="font-semibold text-lg">Voice Analysis Insights</h4>
+                <p className="text-gray-700 bg-gray-50 p-3 rounded-lg">
+                  {result.explanations.voice.summary}
+                </p>
+                <div className="space-y-2">
+                  {result.explanations.voice.feature_importance.slice(0, 3).map((feature, index) => (
+                    <div key={index} className="flex justify-between items-center p-2 bg-gray-50 rounded">
+                      <span className="text-sm text-gray-700">
+                        {formatFeatureName(feature.feature)}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500">
+                          {(feature.value * 100).toFixed(1)}% probability
+                        </span>
                       </div>
                     </div>
                   ))}

@@ -26,6 +26,10 @@ MANIFEST
 *.manifest
 *.spec
 
+Safespace_fastapi/newenv/
+newenv/
+
+.json
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
@@ -44,30 +48,6 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
-
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -91,26 +71,11 @@ poetry.lock
 # PEP 582
 __pypackages__/
 
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
 # Environments
 .env
 .venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-newenv/
 
-# Spyder project settings
-.spyderproject
-.spyproject
+
 
 # Rope project settings
 .ropeproject
@@ -138,17 +103,7 @@ cython_debug/
 # VS Code
 .vscode/
 
-<<<<<<< HEAD:Safespace_fastapi/.gitignore
 
-
-=======
->>>>>>> f2b3ea82b7ccbb143abc1472ea40a110ad5e58bb:Server/.gitignore
-# Data files
-*.csv
-*.json
-*.xml
-*.xlsx
-*.xls
 
 # Logs
 *.log
@@ -157,16 +112,7 @@ logs/
 # Temporary files
 *.tmp
 *.temp
-.DS_Store
-Thumbs.db
 
-# Docker
-.dockerignore
-
-# FastAPI specific
-.pytest_cache/
-.coverage
-htmlcov/
 
 # OS generated files
 .DS_Store
@@ -193,18 +139,8 @@ secrets.json
 .env.production
 .env.staging
 
-# Database files
-*.db
-*.sqlite
-*.sqlite3
+
 
 # Cache directories
 .cache/
-__pycache__/
 *.pyc
-
-# Virtual environment
-newenv/
-venv/
-env/
-.venv/

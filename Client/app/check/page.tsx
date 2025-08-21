@@ -4,7 +4,8 @@ import type React from "react"
 
 import { useState, useEffect, useRef } from "react"
 import { gsap } from "gsap"
-import { Mic, MicOff, Wifi, WifiOff, Activity, AlertCircle, CheckCircle } from "lucide-react"
+import Link from "next/link"
+import { Mic, MicOff, Wifi, WifiOff, Activity, AlertCircle, CheckCircle, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -31,7 +32,14 @@ export default function CheckPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [audioFile, setAudioFile] = useState<File | null>(null)
+  const [audioURL, setAudioURL] = useState<string | null>(null)
+  const [recordingTime, setRecordingTime] = useState(0)
   const [allDataReady, setAllDataReady] = useState(false)
+  
+  // Audio recording refs
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const timerRef = useRef<NodeJS.Timeout | null>(null)
 
   const pageRef = useRef<HTMLDivElement>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
@@ -83,6 +91,7 @@ export default function CheckPage() {
     const file = event.target.files?.[0]
     if (file) {
       setAudioFile(file)
+      setAudioURL(URL.createObjectURL(file))
     }
   }
 
@@ -90,16 +99,72 @@ export default function CheckPage() {
     setDeviceConnected(!deviceConnected)
   }
 
-  const toggleRecording = () => {
-    setIsRecording(!isRecording)
-    if (!isRecording) {
-      // Simulate recording for 3 seconds
-      setTimeout(() => {
-        setIsRecording(false)
-        setAudioFile(new File([""], "recorded_audio.wav", { type: "audio/wav" }))
-      }, 3000)
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 44100
+        } 
+      });
+
+      mediaRecorderRef.current = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      });
+
+      const chunks: Blob[] = [];
+      
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+
+      mediaRecorderRef.current.onstop = () => {
+        const blob = new Blob(chunks, { type: 'audio/webm' });
+        const audioFile = new File([blob], "recorded_audio.webm", { type: "audio/webm" });
+        setAudioFile(audioFile);
+        setAudioURL(URL.createObjectURL(blob));
+        
+        // Stop all tracks
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+
+      // Start timer
+      timerRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+
+    } catch (err) {
+      console.error('Error starting recording:', err);
+      alert('Failed to access microphone. Please check permissions.');
     }
-  }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    }
+  };
+
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
 
 //   const analyzeAllModalities = async () => {
 //   if (!allDataReady || !uploadedFile || !audioFile) return;
@@ -137,19 +202,32 @@ const analyzeAllModalities = async () => {
     formData.append("physiological_file", uploadedFile);
     formData.append("dass21_responses", dass21ResponseString);
 
-    // Add voice probabilities if audio file is available
+    // Add voice audio if available
     if (audioFile) {
-      // For now, we'll use a default voice probability distribution
-      // In a real implementation, you would process the audio file
-      const voiceProbs = [0.33, 0.34, 0.33]; // Default uniform distribution
-      formData.append("voice_probabilities", voiceProbs.join(","));
+      formData.append("voice_audio", audioFile, audioFile.name);
+      console.log("✅ Voice audio file details:", {
+        name: audioFile.name,
+        type: audioFile.type,
+        size: audioFile.size,
+        lastModified: audioFile.lastModified
+      });
     }
 
     // Debug prints
     console.log("✅ Sending physiological_file:", uploadedFile.name);
     console.log("✅ DASS-21 Responses:", dass21ResponseString);
     if (audioFile) {
-      console.log("✅ Voice probabilities:", [0.33, 0.34, 0.33]);
+      console.log("✅ Voice audio file:", audioFile.name);
+    }
+
+    // Debug: Log FormData contents
+    console.log("📋 FormData contents:");
+    for (let [key, value] of formData.entries()) {
+      if (value instanceof File) {
+        console.log(`  ${key}: File(${value.name}, ${value.type}, ${value.size} bytes)`);
+      } else {
+        console.log(`  ${key}: ${value}`);
+      }
     }
 
     const response = await fetch("http://localhost:8000/predict", {
@@ -187,10 +265,32 @@ const analyzeAllModalities = async () => {
 
   const getCompletionPercentage = () => {
     let completed = 0
-    if (uploadedFile) completed += 50
-    if (dass21Responses.some((response) => response > 0)) completed += 50
+    if (uploadedFile) completed += 40
+    if (dass21Responses.some((response) => response > 0)) completed += 40
+    if (audioFile) completed += 20
     return completed
   }
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const playAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.play();
+    }
+  };
+
+  const clearAudio = () => {
+    if (audioURL) {
+      URL.revokeObjectURL(audioURL);
+    }
+    setAudioURL(null);
+    setAudioFile(null);
+    setRecordingTime(0);
+  };
 
   return (
     <main
@@ -208,6 +308,15 @@ const analyzeAllModalities = async () => {
           <p className="text-base sm:text-lg md:text-xl text-gray-600 mb-6 sm:mb-8">
             Complete all three assessments for accurate multimodal stress detection
           </p>
+          <div className="flex justify-center mb-4">
+            <Link
+              href="/stress-buster"
+              className="inline-flex items-center space-x-2 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-sm font-medium rounded-full hover:from-purple-600 hover:to-pink-600 transition-all duration-200 shadow-lg hover:shadow-xl"
+            >
+              <span>🎮</span>
+              <span>Need a break? Try our StressBuster Games!</span>
+            </Link>
+          </div>
 
           {/* Progress Indicator */}
           <div className="max-w-md mx-auto mb-6 sm:mb-8">
@@ -300,31 +409,60 @@ const analyzeAllModalities = async () => {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4 sm:space-y-6">
-                <div className="text-center space-y-4 sm:space-y-6">
-                  <Button
-                    onClick={toggleRecording}
-                    className={`w-28 h-28 sm:w-32 sm:h-32 md:w-40 md:h-40 rounded-full text-white font-bold text-base sm:text-lg md:text-xl ${
-                      isRecording
-                        ? "bg-red-500 hover:bg-red-600 animate-pulse shadow-2xl shadow-red-500/50"
-                        : "bg-teal-600 hover:bg-teal-700 shadow-2xl shadow-teal-500/50"
-                    } transition-all duration-300 hover:scale-105`}
-                  >
-                    {isRecording ? (
-                      <div className="flex flex-col items-center">
-                        <MicOff className="w-8 h-8 sm:w-10 sm:h-10 md:w-16 md:h-16 mb-1 sm:mb-2" />
-                        <span className="text-xs sm:text-sm">Recording...</span>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center">
-                        <Mic className="w-8 h-8 sm:w-10 sm:h-10 md:w-16 md:h-16 mb-1 sm:mb-2" />
-                        <span className="text-xs sm:text-sm">Start</span>
+                {!audioURL ? (
+                  <div className="text-center space-y-4 sm:space-y-6">
+                    <Button
+                      onClick={toggleRecording}
+                      className={`w-28 h-28 sm:w-32 sm:h-32 md:w-40 md:h-40 rounded-full text-white font-bold text-base sm:text-lg md:text-xl ${
+                        isRecording
+                          ? "bg-red-500 hover:bg-red-600 animate-pulse shadow-2xl shadow-red-500/50"
+                          : "bg-teal-600 hover:bg-teal-700 shadow-2xl shadow-teal-500/50"
+                      } transition-all duration-300 hover:scale-105`}
+                    >
+                      {isRecording ? (
+                        <div className="flex flex-col items-center">
+                          <MicOff className="w-8 h-8 sm:w-10 sm:h-10 md:w-16 md:h-16 mb-1 sm:mb-2" />
+                          <span className="text-xs sm:text-sm">Stop</span>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center">
+                          <Mic className="w-8 h-8 sm:w-10 sm:h-10 md:w-16 md:h-16 mb-1 sm:mb-2" />
+                          <span className="text-xs sm:text-sm">Start</span>
+                        </div>
+                      )}
+                    </Button>
+                    <p className="text-gray-600 font-medium text-sm sm:text-base">
+                      {isRecording ? "Recording your voice... Click to stop" : "Click to start voice recording"}
+                    </p>
+                    {isRecording && (
+                      <div className="text-center text-sm text-gray-600">
+                        Recording: {formatTime(recordingTime)}
                       </div>
                     )}
-                  </Button>
-                  <p className="text-gray-600 font-medium text-sm sm:text-base">
-                    {isRecording ? "Recording your voice... Click to stop" : "Click to start voice recording"}
-                  </p>
-                </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <audio
+                        ref={audioRef}
+                        src={audioURL}
+                        controls
+                        className="flex-1"
+                      />
+                      <Button
+                        onClick={clearAudio}
+                        variant="ghost"
+                        size="sm"
+                        className="text-red-600 hover:text-red-700"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      Click play to verify your recording before submitting
+                    </div>
+                  </div>
+                )}
 
                 <div className="border-t pt-4 sm:pt-6">
                   <Label
@@ -336,17 +474,17 @@ const analyzeAllModalities = async () => {
                   <Input
                     id="audio-upload"
                     type="file"
-                    accept=".wav,.mp3,.m4a"
+                    accept=".wav,.mp3,.m4a,.webm"
                     onChange={handleAudioUpload}
                     className="p-3 sm:p-4 text-sm sm:text-base md:text-lg rounded-lg sm:rounded-xl"
                   />
-                  {audioFile && audioFile.name !== "recorded_audio.wav" && (
+                  {audioFile && audioFile.name !== "recorded_audio.webm" && (
                     <p className="text-green-600 mt-2 font-medium text-sm sm:text-base flex items-center space-x-2">
                       <CheckCircle className="w-4 h-4" />
                       <span>{audioFile.name} uploaded</span>
                     </p>
                   )}
-                  {audioFile && audioFile.name === "recorded_audio.wav" && (
+                  {audioFile && audioFile.name === "recorded_audio.webm" && (
                     <p className="text-green-600 mt-2 font-medium text-sm sm:text-base flex items-center space-x-2">
                       <CheckCircle className="w-4 h-4" />
                       <span>Voice recorded successfully</span>
